@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import GoogleSheetsService from './services/googleSheetsService';
 import GoogleDriveService from './services/googleDriveService';
 import GoogleAuthService from './services/googleAuthService';
+import useGoogleSheetTab from './GoogleSheetTab';
 import { 
   createPresentation, 
   addSlide, 
@@ -32,16 +32,9 @@ function App() {
   const [experiences, setExperiences] = useState([]);
   const [form, setForm] = useState({ title: '', startDate: '', endDate: '', description: '' });
   const [selected, setSelected] = useState([]);
-  const [spreadsheetId, setSpreadsheetId] = useState(() => {
-    // localStorage에서 스프레드시트 ID 복원
-    return localStorage.getItem('spreadsheetId') || null;
-  });
-  const [isSheetsInitialized, setIsSheetsInitialized] = useState(false);
   const [isDriveInitialized, setIsDriveInitialized] = useState(false);
   const [driveFiles, setDriveFiles] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isSheetLoading, setIsSheetLoading] = useState(false);
-  const [isExperienceLoading, setIsExperienceLoading] = useState(false);
   const [isDriveLoading, setIsDriveLoading] = useState(false);
   const [isUploadLoading, setIsUploadLoading] = useState(false);
   const [isRefreshLoading, setIsRefreshLoading] = useState(false);
@@ -71,8 +64,32 @@ function App() {
 
   // 통합 인증 서비스 인스턴스
   const authService = useRef(new GoogleAuthService());
-  const sheetsService = useRef(null);
   const driveService = useRef(null);
+
+  // GoogleSheetTab custom hook 사용
+  const googleSheetTab = useGoogleSheetTab({
+    experiences,
+    setExperiences,
+    selected,
+    setSelected,
+    isLoggedIn,
+    setIsLoggedIn,
+    authService,
+    driveService,
+    portfolioFolderId,
+    setPortfolioFolderId,
+    loadDriveFiles,
+    preloadImage,
+    formatPeriod,
+    validateDates,
+    uploadImageToDrive,
+    selectAllExperiences,
+    closeModal,
+    form,
+    setForm,
+    selectedImages,
+    setSelectedImages
+  });
 
   // 섹션 전환
   function showSection(section) {
@@ -124,14 +141,12 @@ function App() {
               console.log('기존 토큰이 없습니다. 서비스 초기화를 건너뜁니다.');
               // 토큰이 없으면 서비스 초기화를 건너뜀 (로그인 상태는 유지)
               setAuthStatus('disconnected');
-              setIsSheetsInitialized(false);
               setIsDriveInitialized(false);
               return;
             }
           } else {
             // 다른 오류는 서비스 초기화를 건너뜀
             setAuthStatus('disconnected');
-            setIsSheetsInitialized(false);
             setIsDriveInitialized(false);
             return;
           }
@@ -158,98 +173,20 @@ function App() {
         console.log('인증이 완료되지 않았습니다. 서비스 초기화를 건너뜁니다.');
         // 토큰이 없으면 서비스 초기화를 건너뜀
         setAuthStatus('disconnected');
-        setIsSheetsInitialized(false);
         setIsDriveInitialized(false);
         return;
       }
 
-      // 서비스 인스턴스 생성 (의존성 주입)
-      sheetsService.current = new GoogleSheetsService(authService.current);
+      // 드라이브 서비스 인스턴스 생성
       driveService.current = new GoogleDriveService(authService.current);
 
-      console.log('서비스 인스턴스 생성 완료');
+      console.log('드라이브 서비스 인스턴스 생성 완료');
 
-      // 기존 스프레드시트가 있는지 확인하고 없으면 생성
-      let currentSpreadsheetId = spreadsheetId;
+      // 구글 시트 서비스 초기화
+      await googleSheetTab.initializeSheetsService();
 
-      if (currentSpreadsheetId) {
-        console.log('기존 스프레드시트 ID 확인 중:', currentSpreadsheetId);
-
-        try {
-          // 기존 시트가 실제로 존재하는지 확인
-          const exists = await sheetsService.current.checkSpreadsheetExists(currentSpreadsheetId);
-          if (!exists) {
-            console.log('기존 스프레드시트가 존재하지 않습니다. 상태를 초기화합니다...');
-            currentSpreadsheetId = null;
-            setSpreadsheetId(null);
-            localStorage.removeItem('spreadsheetId');
-          } else {
-            console.log('기존 스프레드시트가 유효합니다.');
-          }
-        } catch (error) {
-          console.log('기존 스프레드시트 확인 중 오류, 상태를 초기화합니다:', error);
-          currentSpreadsheetId = null;
-          setSpreadsheetId(null);
-          localStorage.removeItem('spreadsheetId');
-        }
-      }
-
-      if (!currentSpreadsheetId) {
-        console.log('기존 포트폴리오 시트 파일 검색 중...');
-
-        try {
-          // 포트폴리오 이력 폴더가 있는지 확인 (생성하지 않고 찾기만)
-          const portfolioFolder = await driveService.current.findFolder('포트폴리오 이력');
-
-          if (portfolioFolder) {
-            console.log('기존 포트폴리오 이력 폴더 발견:', portfolioFolder.id);
-
-            // 포트폴리오 이력 폴더 안에서 기존 시트 파일 검색
-            const existingFiles = await driveService.current.listFiles(50, portfolioFolder.id);
-            const portfolioFile = existingFiles.find(file =>
-                file.name === '포트폴리오 이력' &&
-                file.mimeType === 'application/vnd.google-apps.spreadsheet'
-            );
-
-            if (portfolioFile) {
-              console.log('기존 포트폴리오 시트 파일 발견:', portfolioFile.id);
-              // 기존 파일 ID 저장
-              currentSpreadsheetId = portfolioFile.id;
-              setSpreadsheetId(currentSpreadsheetId);
-              localStorage.setItem('spreadsheetId', currentSpreadsheetId);
-
-              // 포트폴리오 폴더 ID 설정
-              setPortfolioFolderId(portfolioFolder.id);
-              localStorage.setItem('portfolioFolderId', portfolioFolder.id);
-            } else {
-              console.log('포트폴리오 이력 폴더는 있지만 시트 파일이 없습니다.');
-              // 폴더는 있지만 시트가 없으면 폴더 ID만 저장
-              setPortfolioFolderId(portfolioFolder.id);
-              localStorage.setItem('portfolioFolderId', portfolioFolder.id);
-            }
-          } else {
-            console.log('포트폴리오 이력 폴더가 없습니다. 시트 생성 시 함께 생성됩니다.');
-          }
-
-        } catch (error) {
-          console.error('기존 파일 확인 중 오류:', error);
-          console.log('시트 생성 시 폴더도 함께 생성됩니다.');
-        }
-      }
-
-      // 서비스 초기화 상태 설정
-      setIsSheetsInitialized(true);
+      // 드라이브 서비스 초기화 상태 설정
       setIsDriveInitialized(true);
-
-      // 기존 데이터 로드 (시트 생성 후에만 실행)
-      if (currentSpreadsheetId) {
-        // 시트 ID 상태를 먼저 업데이트
-        setSpreadsheetId(currentSpreadsheetId);
-
-        // 새로 생성된 시트에서 데이터 로드
-        await loadExperiencesFromSheets(currentSpreadsheetId);
-        await loadDriveFiles();
-      }
 
       console.log('모든 서비스 초기화 완료');
 
@@ -257,42 +194,10 @@ function App() {
       console.error('서비스 초기화 오류:', error);
       const errorMessage = error?.message || '서비스 초기화에 실패했습니다.';
       alert(errorMessage);
-      setIsSheetsInitialized(false);
       setIsDriveInitialized(false);
     }
   }
 
-  // 시트에서 이력 데이터 로드
-  async function loadExperiencesFromSheets(spreadsheetIdToUse = null) {
-    const targetSpreadsheetId = spreadsheetIdToUse || spreadsheetId;
-
-    if (!targetSpreadsheetId || !sheetsService.current) return;
-
-    try {
-      const sheetData = await sheetsService.current.readData(targetSpreadsheetId, 'A:E');
-      const experiences = sheetsService.current.formatSheetToExperience(sheetData);
-      setExperiences(experiences);
-      
-      // 이미지 프리로딩 (백그라운드에서 미리 로딩)
-      experiences.forEach(exp => {
-        if (exp.imageUrls && exp.imageUrls.length > 0) {
-          exp.imageUrls.forEach(imageUrl => {
-            preloadImage(imageUrl).catch(err => {
-              console.log('이미지 프리로딩 실패 (무시됨):', imageUrl, err);
-            });
-          });
-        }
-      });
-    } catch (error) {
-      console.error('이력 데이터 로드 오류:', error);
-      // 시트가 존재하지 않는 경우 로그만 출력하고 새로 생성하지 않음
-      if (error.message.includes('찾을 수 없습니다') || error.status === 404) {
-        console.log('시트가 존재하지 않습니다. 시트를 다시 생성해주세요.');
-        // 사용자에게 알림
-        alert('포트폴리오 시트가 삭제되었습니다. 로그아웃 후 다시 로그인해주세요.');
-      }
-    }
-  }
 
   // 드라이브 파일 목록 로드
   async function loadDriveFiles(parentId = null) {
@@ -302,20 +207,7 @@ function App() {
       console.log('드라이브 파일 불러오기 시작, 뷰 모드:', driveViewMode, '부모 ID:', parentId);
 
       // 시트가 있다면 실제로 존재하는지 확인
-      if (spreadsheetId && sheetsService.current) {
-        try {
-          const exists = await sheetsService.current.checkSpreadsheetExists(spreadsheetId);
-          if (!exists) {
-            console.log('저장된 시트가 존재하지 않습니다. 상태를 초기화합니다.');
-            setSpreadsheetId(null);
-            localStorage.removeItem('spreadsheetId');
-          }
-        } catch (error) {
-          console.log('시트 존재 확인 중 오류:', error);
-          setSpreadsheetId(null);
-          localStorage.removeItem('spreadsheetId');
-        }
-      }
+      await googleSheetTab.checkSheetExists();
 
       let files;
       if (parentId) {
@@ -338,21 +230,9 @@ function App() {
     }
   }
 
-  // 로그인 상태 저장
+  // 로그인 상태 저장 (GoogleSheetTab의 함수 사용)
   function saveLoginState(loggedIn, spreadsheetIdValue = null) {
-    setIsLoggedIn(loggedIn);
-    localStorage.setItem('isLoggedIn', loggedIn.toString());
-
-    if (spreadsheetIdValue) {
-      setSpreadsheetId(spreadsheetIdValue);
-      localStorage.setItem('spreadsheetId', spreadsheetIdValue);
-    }
-
-    // 로그아웃 시에는 스프레드시트 ID도 제거
-    if (!loggedIn) {
-      localStorage.removeItem('spreadsheetId');
-      setSpreadsheetId(null);
-    }
+    googleSheetTab.saveLoginState(loggedIn, spreadsheetIdValue);
   }
 
   // GIS 기반 로그인 (단일 팝업에서 로그인+권한 처리)
@@ -409,12 +289,11 @@ function App() {
       localStorage.setItem('driveViewMode', 'all');
       localStorage.removeItem('portfolioFolderId');
       setPortfolioFolderId(null);
-      setIsSheetsInitialized(false);
       setIsDriveInitialized(false);
       setAuthStatus('disconnected');
 
       // 서비스 인스턴스 정리
-      sheetsService.current = null;
+      googleSheetTab.cleanupSheetsService();
       driveService.current = null;
     }
   }
@@ -479,55 +358,9 @@ function App() {
     return true;
   }
 
-  // 이력 저장
+  // 이력 저장 (GoogleSheetTab의 함수 사용)
   async function saveExperience(e) {
-    e.preventDefault();
-    if (form.title && form.startDate && form.endDate && form.description) {
-      // 날짜 유효성 검사
-      if (!validateDates(form.startDate, form.endDate)) {
-        return;
-      }
-
-      try
-      {
-        setIsExperienceLoading(true);
-
-        let imageUrls = [];
-
-        // 이미지들이 선택된 경우 구글 드라이브에 업로드
-        if (selectedImages.length > 0) {
-          for (const imageFile of selectedImages) {
-            const imageUrl = await uploadImageToDrive(imageFile, form.title);
-            imageUrls.push(imageUrl);
-          }
-        }
-
-        // 기간 포맷팅
-        const period = formatPeriod(form.startDate, form.endDate);
-
-        // 로컬 상태 업데이트 (기간 포함)
-        const newExperience = {
-          ...form,
-          period, // 포맷팅된 기간 추가
-          imageUrls
-        };
-        setExperiences([...experiences, newExperience]);
-
-        // 구글 시트에 저장
-        if (spreadsheetId && sheetsService.current) {
-          const sheetData = sheetsService.current.formatExperienceForSheet(newExperience);
-          await sheetsService.current.appendData(spreadsheetId, 'A:E', [sheetData]);
-        }
-
-        closeModal();
-      }catch (error) {
-        console.error('이력 저장 오류:', error);
-        const errorMessage = sheetsService.current?.formatErrorMessage(error) || '이력 저장에 실패했습니다.';
-        alert(errorMessage);
-      } finally {
-        setIsExperienceLoading(false);
-      }
-    }
+    await googleSheetTab.saveExperience(e);
   }
 
   // 전체 선택/해제
@@ -816,39 +649,9 @@ function App() {
     }
   }
 
-  // 선택된 이력 삭제
+  // 선택된 이력 삭제 (GoogleSheetTab의 함수 사용)
   async function deleteSelectedExperiences() {
-    if (selected.length === 0 || !sheetsService.current) return;
-
-    if (!window.confirm('선택된 이력을 삭제하시겠습니까?')) return;
-
-    try {
-      setIsExperienceLoading(true);
-
-      // 선택된 이력들을 구글 시트에서 삭제
-      if (spreadsheetId && isSheetsInitialized) {
-        // 선택된 행들을 역순으로 정렬하여 삭제 (인덱스가 변경되지 않도록)
-        const sortedSelected = [...selected].sort((a, b) => b - a);
-
-        for (const index of sortedSelected) {
-          // 헤더 + 선택된 인덱스 + 1 (시트는 1부터 시작)
-          const rowNumber = index + 2;
-          await sheetsService.current.deleteData(spreadsheetId, `A${rowNumber}:E${rowNumber}`);
-        }
-      }
-
-      // 로컬 상태에서도 삭제
-      const newExperiences = experiences.filter((_, idx) => !selected.includes(idx));
-      setExperiences(newExperiences);
-      setSelected([]);
-
-    } catch (error) {
-      console.error('이력 삭제 오류:', error);
-      const errorMessage = sheetsService.current?.formatErrorMessage(error) || '이력 삭제에 실패했습니다.';
-      alert(errorMessage);
-    } finally {
-      setIsExperienceLoading(false);
-    }
+    await googleSheetTab.deleteSelectedExperiences();
   }
 
   // 파일 다운로드 (Access Token 사용)
@@ -938,103 +741,19 @@ function App() {
     }
   }
 
-  // 구글 시트 데이터 새로고침
+  // 구글 시트 데이터 새로고침 (GoogleSheetTab의 함수 사용)
   async function refreshSheetsData() {
-    try {
-      setIsExperienceLoading(true);
-      await loadExperiencesFromSheets();
-      alert('구글 시트 데이터가 새로고침되었습니다!');
-    } catch (error) {
-      console.error('시트 데이터 새로고침 오류:', error);
-      alert('데이터 새로고침에 실패했습니다: ' + (error?.message || error));
-    } finally {
-      setIsExperienceLoading(false);
-    }
+    await googleSheetTab.refreshSheetsData();
   }
 
-  // 시트 생성
+  // 시트 생성 (GoogleSheetTab의 함수 사용)
   async function createSheet() {
-    if (!sheetsService.current || !driveService.current) return;
-
-    try {
-      setIsSheetLoading(true);
-
-      // 포트폴리오 이력 폴더 생성 또는 찾기
-      const portfolioFolder = await driveService.current.ensurePortfolioFolder();
-      setPortfolioFolderId(portfolioFolder.id);
-      localStorage.setItem('portfolioFolderId', portfolioFolder.id);
-
-      // 이미지 폴더도 생성
-      await driveService.current.ensureImageFolder(portfolioFolder.id);
-
-      // 시트 생성
-      const spreadsheet = await sheetsService.current.createSpreadsheet('포트폴리오 이력', portfolioFolder.id);
-      const newSpreadsheetId = spreadsheet.spreadsheetId;
-
-      // 상태 업데이트
-      setSpreadsheetId(newSpreadsheetId);
-      localStorage.setItem('spreadsheetId', newSpreadsheetId);
-
-      // 헤더 설정
-      await sheetsService.current.setupHeaders(newSpreadsheetId);
-
-      // 파일 목록 새로고침
-      await loadDriveFiles();
-
-      alert('포트폴리오 시트와 폴더가 생성되었습니다!');
-    } catch (error) {
-      console.error('시트 생성 오류:', error);
-      alert('시트 생성에 실패했습니다: ' + (error?.message || error));
-    } finally {
-      setIsSheetLoading(false);
-    }
+    await googleSheetTab.createSheet();
   }
 
-  // 시트 삭제
+  // 시트 삭제 (GoogleSheetTab의 함수 사용)
   async function deleteSheet() {
-    if (!spreadsheetId || !driveService.current) return;
-
-    if (!window.confirm('포트폴리오 시트와 포트폴리오 이력 폴더를 모두 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) return;
-
-    try {
-      setIsSheetLoading(true);
-
-      // 시트 파일 삭제
-      await driveService.current.deleteFile(spreadsheetId);
-
-      // 포트폴리오 이력 폴더도 삭제
-      if (portfolioFolderId) {
-        try {
-          await driveService.current.deleteFile(portfolioFolderId);
-          console.log('포트폴리오 이력 폴더도 삭제됨');
-        } catch (folderError) {
-          console.warn('포트폴리오 폴더 삭제 실패:', folderError);
-        }
-      }
-
-      // 상태 초기화
-      setSpreadsheetId(null);
-      localStorage.removeItem('spreadsheetId');
-      setPortfolioFolderId(null);
-      localStorage.removeItem('portfolioFolderId');
-      setExperiences([]);
-
-      // 강제로 상태 업데이트
-      setTimeout(() => {
-        setSpreadsheetId(null);
-        setPortfolioFolderId(null);
-      }, 100);
-
-      // 파일 목록 새로고침
-      await loadDriveFiles();
-
-      alert('포트폴리오 시트와 폴더가 삭제되었습니다!');
-    } catch (error) {
-      console.error('시트 삭제 오류:', error);
-      alert('시트 삭제에 실패했습니다: ' + (error?.message || error));
-    } finally {
-      setIsSheetLoading(false);
-    }
+    await googleSheetTab.deleteSheet();
   }
 
   // 뷰 모드 전환
@@ -1274,8 +993,7 @@ function App() {
           console.log('저장된 로그인 상태 발견, 서비스 초기화 시작...');
 
           // 로그인 상태를 먼저 설정
-          setIsLoggedIn(true);
-          setSpreadsheetId(savedSpreadsheetId);
+          saveLoginState(true, savedSpreadsheetId);
 
           // 통합 인증 시스템 초기화
           await initializeGoogleAuth();
@@ -1483,10 +1201,10 @@ function App() {
                           <div className="mac-window-content">
                             <div className="d-flex justify-content-between align-items-center mb-3">
                               <div>
-                                <button className="btn btn-outline-dark me-2" onClick={() => selectAllExperiences(true)} disabled={isExperienceLoading}>전체 선택</button>
-                                <button className="btn btn-outline-dark me-2" onClick={() => selectAllExperiences(false)} disabled={isExperienceLoading}>전체 해제</button>
-                                <button className="btn btn-outline-danger" onClick={deleteSelectedExperiences} disabled={selected.length === 0 || isExperienceLoading}>
-                                  {isExperienceLoading ? (
+                                <button className="btn btn-outline-dark me-2" onClick={() => selectAllExperiences(true)} disabled={googleSheetTab.isExperienceLoading}>전체 선택</button>
+                                <button className="btn btn-outline-dark me-2" onClick={() => selectAllExperiences(false)} disabled={googleSheetTab.isExperienceLoading}>전체 해제</button>
+                                <button className="btn btn-outline-danger" onClick={deleteSelectedExperiences} disabled={selected.length === 0 || googleSheetTab.isExperienceLoading}>
+                                  {googleSheetTab.isExperienceLoading ? (
                                       <>
                                         <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
                                         삭제 중...
@@ -1497,8 +1215,8 @@ function App() {
                                 </button>
                               </div>
                               <div>
-                                <button className="btn btn-outline-primary me-2" onClick={refreshSheetsData} disabled={isExperienceLoading}>
-                                  {isExperienceLoading ? (
+                                <button className="btn btn-outline-primary me-2" onClick={refreshSheetsData} disabled={googleSheetTab.isExperienceLoading}>
+                                  {googleSheetTab.isExperienceLoading ? (
                                       <>
                                         <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
                                         새로고침 중...
@@ -1512,7 +1230,7 @@ function App() {
                                 <button
                                     className="btn btn-dark"
                                     id="nextButton"
-                                    disabled={selected.length === 0 || isExperienceLoading}
+                                    disabled={selected.length === 0 || googleSheetTab.isExperienceLoading}
                                     onClick={() => {
                                       const picked = selected
                                           .sort((a,b)=>a-b)
@@ -1826,13 +1544,13 @@ function App() {
                                   <div className="d-flex justify-content-between align-items-center mb-3">
                                     <h4>포트폴리오 시트 관리</h4>
                                     <div>
-                                      {spreadsheetId ? (
+                                      {googleSheetTab.spreadsheetId ? (
                                           <button
                                               className="btn btn-outline-danger btn-sm"
                                               onClick={deleteSheet}
-                                              disabled={isSheetLoading}
+                                              disabled={googleSheetTab.isSheetLoading}
                                           >
-                                            {isSheetLoading ? (
+                                            {googleSheetTab.isSheetLoading ? (
                                                 <>
                                                   <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
                                                   삭제 중...
@@ -1847,9 +1565,9 @@ function App() {
                                           <button
                                               className="btn btn-outline-success btn-sm"
                                               onClick={createSheet}
-                                              disabled={isSheetLoading}
+                                              disabled={googleSheetTab.isSheetLoading}
                                           >
-                                            {isSheetLoading ? (
+                                            {googleSheetTab.isSheetLoading ? (
                                                 <>
                                                   <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
                                                   생성 중...
@@ -1863,7 +1581,7 @@ function App() {
                                       )}
                                     </div>
                                   </div>
-                                  {!spreadsheetId && (
+                                  {!googleSheetTab.spreadsheetId && (
                                       <div className="alert alert-info" role="alert">
                                         <i className="fas fa-info-circle me-2"></i>
                                         시트파일이 없습니다. 새로 생성해주세요.
@@ -2414,9 +2132,9 @@ function App() {
                       </div>
                     </div>
                     <div className="modal-footer">
-                      <button type="button" className="btn btn-secondary" onClick={closeModal} disabled={isExperienceLoading}>취소</button>
-                      <button type="submit" className="btn btn-primary" disabled={isExperienceLoading}>
-                        {isExperienceLoading ? (
+                      <button type="button" className="btn btn-secondary" onClick={closeModal} disabled={googleSheetTab.isExperienceLoading}>취소</button>
+                      <button type="submit" className="btn btn-primary" disabled={googleSheetTab.isExperienceLoading}>
+                        {googleSheetTab.isExperienceLoading ? (
                             <>
                               <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
                               저장 중...
