@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import GoogleDriveService from './services/googleDriveService';
 import GoogleAuthService from './services/googleAuthService';
-import useGoogleSheetTab from './GoogleSheetTab';
+import useGoogleSheetTab from './tabs/GoogleSheetTab';
 import { 
   createPresentation, 
   addSlide, 

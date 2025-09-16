@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
-import GoogleSheetsService from './services/googleSheetsService';
-import GoogleDriveService from './services/googleDriveService';
-import GoogleAuthService from './services/googleAuthService';
+import GoogleSheetsService from '../services/googleSheetsService';
+import GoogleDriveService from '../services/googleDriveService';
+import GoogleAuthService from '../services/googleAuthService';
 
 function useGoogleSheetTab({
   // Props from App.js

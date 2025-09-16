@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import GoogleDriveService from './services/googleDriveService';
-import GoogleAuthService from './services/googleAuthService';
+import GoogleDriveService from '../services/googleDriveService';
+import GoogleAuthService from '../services/googleAuthService';
 
 function GoogleDriveTab() {
     const [files, setFiles] = useState([]);
