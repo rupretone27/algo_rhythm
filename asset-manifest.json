@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/algo_rhythm/static/css/main.84f0b493.css",
+    "main.js": "/algo_rhythm/static/js/main.aa4bba6c.js",
+    "static/js/453.fc490bdb.chunk.js": "/algo_rhythm/static/js/453.fc490bdb.chunk.js",
+    "index.html": "/algo_rhythm/index.html",
+    "main.84f0b493.css.map": "/algo_rhythm/static/css/main.84f0b493.css.map",
+    "main.aa4bba6c.js.map": "/algo_rhythm/static/js/main.aa4bba6c.js.map",
+    "453.fc490bdb.chunk.js.map": "/algo_rhythm/static/js/453.fc490bdb.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.84f0b493.css",
+    "static/js/main.aa4bba6c.js"
+  ]
+}
